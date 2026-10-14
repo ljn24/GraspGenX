@@ -60,9 +60,14 @@ def point_cloud_outlier_removal(
         Tuple[torch.Tensor, torch.Tensor]: Tuple containing filtered and removed point clouds.
     """
     obj_pc = obj_pc.float()
+    # Self-distances are excluded by knn_points. Sparse visible surfaces may
+    # have fewer than 20 neighbours; a singleton has no supporting neighbour.
+    if len(obj_pc) < 2:
+        return obj_pc[:0], obj_pc
+    k = min(20, len(obj_pc) - 1)
     obj_pc = obj_pc.unsqueeze(0)
 
-    nn_dists, _ = knn_points(obj_pc[0], K=20, norm=1)
+    nn_dists, _ = knn_points(obj_pc[0], K=k, norm=1)
 
     mask = nn_dists.mean(1) < threshold
     filtered_pc = obj_pc[0, mask]
