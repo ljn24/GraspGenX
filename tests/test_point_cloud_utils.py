@@ -4,6 +4,22 @@ import numpy as np
 from graspgenx.utils.point_cloud import knn_points, point_cloud_outlier_removal
 
 
+def test_outlier_mask_matches_dense_float32_at_threshold():
+    # float64 distances (even cast back to float32) can flip these decisions.
+    for seed in range(100):
+        rng = np.random.default_rng(seed)
+        points = rng.normal(size=(21, 3)).astype(np.float32)
+        points[0] = 0
+        points *= np.float32(0.014 / np.abs(points[1:]).sum(1).mean())
+        points = torch.from_numpy(points)
+        dense = torch.cdist(points, points, p=1)
+        dense.fill_diagonal_(float("inf"))
+        mask = dense.topk(20, dim=1, largest=False).values.mean(1) < 0.014
+        kept, removed = point_cloud_outlier_removal(points)
+        assert torch.equal(kept, points[mask])
+        assert torch.equal(removed, points[~mask])
+
+
 def test_knn_points_basic():
     points = torch.tensor(
         [

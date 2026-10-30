@@ -6,6 +6,7 @@ import sys
 from typing import Dict, Tuple
 
 import numpy as np
+from scipy.spatial import cKDTree
 import torch
 import trimesh
 import trimesh.transformations as tra
@@ -26,22 +27,20 @@ def knn_points(X: torch.Tensor, K: int, norm: int):
         K: Number of nearest neighbors.
 
     Returns:
-        dists: (N, K) tensor containing squared Euclidean distances to the K nearest neighbors.
+        dists: (N, K) tensor containing distances under the requested norm.
         idxs: (N, K) tensor containing indices of the K nearest neighbors.
     """
-    N, _ = X.shape
-
-    # Compute pairwise squared Euclidean distances
-    dist_matrix = torch.cdist(X, X, p=norm)  # (N, N)
-
-    # Ignore self-distance (optional, but avoids trivial zero distance)
-    self_mask = torch.eye(N, device=X.device, dtype=torch.bool)
-    dist_matrix.masked_fill_(self_mask, float("inf"))  # Set self-distances to inf
-
-    # Get the indices of the K-nearest neighbors
-    dists, idxs = torch.topk(dist_matrix, K, dim=1, largest=False)
-
-    return dists, idxs
+    points = X.detach().cpu().numpy()
+    distances, indices = cKDTree(points).query(points, k=K + 1, p=norm, eps=0, workers=1)
+    # Exclude by index: duplicate points need not return self as the first match.
+    distances[indices == np.arange(len(X))[:, None]] = np.inf
+    order = np.argsort(distances, axis=1, kind="stable")[:, :K]
+    idxs = torch.as_tensor(np.take_along_axis(indices, order, axis=1), device=X.device)
+    # Recompute in the input dtype to preserve float32 threshold decisions.
+    delta = (X[:, None, :] - X[idxs]).abs()
+    dists = delta.sum(-1) if norm == 1 else torch.linalg.vector_norm(delta, ord=norm, dim=-1)
+    dists, order = dists.sort(dim=1)
+    return dists, idxs.gather(1, order)
 
 
 def point_cloud_outlier_removal(
